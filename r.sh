@@ -1,0 +1,9 @@
+#!/bin/sh -x
+
+TRG_HOST=""
+CLIENT_ID=""
+CLIENT_SECRET=""
+USER=""
+PWD=""
+
+./run.sh $TRG_HOST $CLIENT_ID $CLIENT_SECRET $USER $PWD
