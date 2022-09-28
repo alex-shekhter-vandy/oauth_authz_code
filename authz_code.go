@@ -1,8 +1,9 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,6 +35,9 @@ var (
 	authzErr = ""
 	code     = ""
 	state    = ""
+
+	cancel context.CancelFunc
+	ctx    context.Context
 )
 
 /***
@@ -59,7 +63,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	validate()
 
-	obtainToken()
+	if obtainToken() {
+		w.Write([]byte("OK"))
+		fmt.Println("Before Calling Cancel...")
+		cancel()
+	}
 }
 
 // Kills server if something is not good enough
@@ -74,15 +82,8 @@ func validate() {
 	}
 }
 
-func obtainToken() {
-	/***
-		curl --request POST \
-		--url https://${yourOktaDomain}/oauth2/default/v1/token \
-		--header 'accept: application/json' \
-		--header 'authorization: Basic MG9hY...' \
-		--header 'content-type: application/x-www-form-urlencoded' \
-		--data 'grant_type=authorization_code&redirect_uri=http%3A%2F%2Flocalhost%3A8080&code=P59yPm1_X1gxtdEOEZjn'
-	***/
+func obtainToken() (gotToken bool) {
+	gotToken = false
 
 	uri := "https://" + server + "/oauth2/default/v1/token"
 
@@ -90,6 +91,8 @@ func obtainToken() {
 	data.Set("grant_type", "authorization_code")
 	fmt.Printf("REDIRECT URI %s\n", redirectUri)
 	data.Set("redirect_uri", redirectUri)
+	data.Set("client_id", clientId)
+	data.Set("client_secret", clientSecret)
 	data.Set("code", code)
 
 	fmt.Printf("Submitting data: %+v\nEncoded: %+v\n", data, data.Encode())
@@ -101,7 +104,7 @@ func obtainToken() {
 	}
 
 	//set headers to the request
-	r.SetBasicAuth(user, pwd)
+	// r.SetBasicAuth(clientId, clientSecret)
 	r.Header.Add("Accept", "application/json")
 	r.Header.Add("Content-Type", "application/x-www-form-urlencoded") //this is a must for form data encoded request
 
@@ -111,10 +114,20 @@ func obtainToken() {
 	client := &http.Client{}
 	res, err := client.Do(r)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed while obtaining token %s\n", err)
+		fmt.Fprintf(os.Stderr, "ERROR: Failed while obtaining token %s\n", err.Error())
 		os.Exit(200)
 	}
 	fmt.Println(res.Status)
+
+	if res.StatusCode == 200 {
+		defer res.Body.Close()
+		jsonRes := tokenResp{}
+		json.NewDecoder(res.Body).Decode(&jsonRes)
+		fmt.Fprintf(os.Stdout, "\n\nSUCCESS: Got token: %+v\n\n", jsonRes)
+		gotToken = true
+	}
+
+	return gotToken
 }
 
 func openbrowser(url string) {
@@ -131,7 +144,7 @@ func openbrowser(url string) {
 		err = fmt.Errorf("unsupported platform")
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Can't open browser %s\n", err)
+		fmt.Fprintf(os.Stderr, "ERROR: Can't open browser %s\n", err.Error())
 	}
 }
 
@@ -162,5 +175,25 @@ func main() {
 	authz()
 
 	http.HandleFunc("/", handler)
-	log.Fatal(http.ListenAndServe(":8080", nil))
+
+	ctx, cancel = context.WithCancel(context.Background())
+
+	srv := &http.Server{Addr: ":8080"}
+	go func() {
+		err := srv.ListenAndServe()
+		if err != http.ErrServerClosed {
+			fmt.Fprintf(os.Stderr, "ERROR: Server Close error %s\n", err.Error())
+		}
+	}()
+
+	<-ctx.Done()
+
+	// Gracefully shutdown our server
+	err := srv.Shutdown(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Server Shutdown failed %s\n", err.Error())
+	}
+
+	fmt.Println("--- Done. ---")
+	// log.Fatal(http.ListenAndServe(":8080", nil))
 }

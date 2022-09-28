@@ -11,7 +11,6 @@ REDIRECT_URI=${6:-http://$REDIRECT_HOST:$REDIRECT_PORT/authorization-code/callba
 
 
 killall -9 authz_code 
-sleep 3
 
 #
 # Recompile just in case
